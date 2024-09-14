@@ -10,6 +10,8 @@ from webdriver_manager.chrome import ChromeDriverManager
 from io import StringIO
 import matplotlib.pyplot as plt
 import seaborn as sns
+import openpyxl
+from openpyxl.drawing.image import Image
 
 # Setup Selenium WebDriver with WebDriver Manager
 chrome_options = Options()
@@ -32,8 +34,7 @@ try:
     submit_button = driver.find_element(By.ID, 'BtnSubmit')  # Correct ID for the submit button
 
     query = '''SELECT sacatalog.areaname AS "State", 
-                      ROUND(SUM(chorizon.sandtotal_r * component.comppct_r / 100) / SUM(component.comppct_r), 2) 
-                      AS "Sand Percentage" 
+                      ROUND(SUM(chorizon.sandtotal_r * component.comppct_r / 100) / SUM(component.comppct_r), 2) AS "Sand Percentage" 
                FROM sacatalog 
                JOIN legend ON sacatalog.areasymbol = legend.areasymbol 
                JOIN mapunit ON legend.lkey = mapunit.lkey 
@@ -74,41 +75,68 @@ try:
         html_string = str(table)
         df = pd.read_html(StringIO(html_string))[0]
 
-        # Save the DataFrame to an Excel file with xlsxwriter engine
-        excel_file = 'sand_percentage_report_with_graph.xlsx'
-        writer = pd.ExcelWriter(excel_file, engine='xlsxwriter')
-        df.to_excel(writer, index=False, sheet_name='Sand Data')
+        # Define a function to extract city from state
+        def extract_city(state):
+            return state.split(',')[0].strip()
 
-        # Create a plot using Seaborn
-        plt.figure(figsize=(12, 8))  # Adjust figure size based on dataset size
-        sns.lineplot(data=df, x='State', y='Sand Percentage', marker='o')
+        # Apply the function to create the 'City' column
+        df['City'] = df['State'].apply(extract_city)
 
-        # Improve plot readability
-        plt.xticks(rotation=90)  # Rotate X-axis labels for better readability
-        plt.title('Sand Percentage by State', fontsize=16)
-        plt.xlabel('State', fontsize=12)
-        plt.ylabel('Sand Percentage', fontsize=12)
-        plt.grid(True)  # Add gridlines for better clarity
-        plt.tight_layout()  # Ensure labels and title fit within the figure
+        # Aggregate data by City, averaging the Sand Percentage
+        df_aggregated = df.groupby('City').agg({'Sand Percentage': 'mean'}).reset_index()
 
-        # Save the plot as an image file
-        plot_image = 'sand_percentage_plot.png'
-        plt.savefig(plot_image)
+        # Sort by 'Sand Percentage' and select top 30
+        df_top30 = df_aggregated.sort_values(by='Sand Percentage', ascending=False).head(30)
 
-        print(f"Plot saved as {plot_image}")
+        # Save both DataFrames to an Excel file
+        excel_file = 'sand_percentage_report.xlsx'
+        with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
+            # Save original data
+            df.to_excel(writer, sheet_name='Original Data', index=False)
 
-        # Access the workbook and worksheet objects
-        workbook = writer.book
-        worksheet = writer.sheets['Sand Data']
+            # Save top 30 aggregated data
+            df_top30.to_excel(writer, sheet_name='Top 30 Cities', index=False)
 
-        # Insert the plot image into the worksheet
-        worksheet.insert_image('E2', plot_image)
+        print(f"Reports successfully saved to {excel_file}")
 
-        # Save and close the Excel writer
-        writer.close()
+        # Create a vertical bar plot with different colors
+        plt.figure(figsize=(16, 10))
+        # Create a hue column with dummy values for color palette
+        df_top30['Hue'] = df_top30.index
+        bar_plot = sns.barplot(x='City', y='Sand Percentage', data=df_top30,
+                               palette=sns.color_palette("husl", len(df_top30)), hue='Hue', dodge=False)
+        plt.xticks(rotation=90)  # Rotate city names for clarity
+        plt.title('Top 30 Cities by Sand Percentage')
+        plt.tight_layout()
 
-        print(f"Report with graph successfully saved to {excel_file}")
+        # Add values on top of bars with bold font
+        for p in bar_plot.patches:
+            height = p.get_height()
+            bar_plot.annotate(f'{height:.2f}',
+                              (p.get_x() + p.get_width() / 2., height),
+                              ha='center', va='center',
+                              xytext=(0, 5),
+                              textcoords='offset points',
+                              fontsize=12,
+                              fontweight='bold')
 
+        # Save the plot to a PNG file
+        plot_file = 'top30_sand_percentage_barplot.png'
+        plt.savefig(plot_file)
+        plt.close()
+
+        print(f"Bar plot saved as {plot_file}")
+
+        # Add the plot to the Excel file
+        with pd.ExcelWriter(excel_file, engine='openpyxl', mode='a') as writer:
+            workbook = writer.book
+            worksheet = workbook.create_sheet('Bar Plot')
+
+            # Add the plot image to the Excel file
+            img = Image(plot_file)
+            worksheet.add_image(img, 'A1')
+
+        print("Bar plot with different colors and bold values added to the Excel file.")
     else:
         print("Error: Table not found in the response.")
 
