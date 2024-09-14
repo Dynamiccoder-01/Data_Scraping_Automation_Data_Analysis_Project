@@ -8,7 +8,8 @@ import pandas as pd
 from bs4 import BeautifulSoup
 from webdriver_manager.chrome import ChromeDriverManager
 from io import StringIO
-
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # Setup Selenium WebDriver with WebDriver Manager
 chrome_options = Options()
@@ -18,7 +19,7 @@ driver = webdriver.Chrome(service=service, options=chrome_options)
 
 # Open the website
 url = 'https://sdmdataaccess.nrcs.usda.gov/Query.aspx'
-print("Current Window: ",url)
+print("Current Window: ", url)
 driver.get(url)
 
 print("Website opened. Preparing to submit the query...")
@@ -30,7 +31,17 @@ try:
     )
     submit_button = driver.find_element(By.ID, 'BtnSubmit')  # Correct ID for the submit button
 
-    query = 'SELECT sacatalog.areaname AS "State", ROUND(SUM(chorizon.sandtotal_r * component.comppct_r / 100) / SUM(component.comppct_r), 2) AS "Sand Percentage" FROM sacatalog JOIN legend ON sacatalog.areasymbol = legend.areasymbol JOIN mapunit ON legend.lkey = mapunit.lkey JOIN component ON mapunit.mukey = component.mukey JOIN chorizon ON component.cokey = chorizon.cokey WHERE sacatalog.areaname IS NOT NULL GROUP BY sacatalog.areaname ORDER BY sacatalog.areaname;'
+    query = '''SELECT sacatalog.areaname AS "State", 
+                      ROUND(SUM(chorizon.sandtotal_r * component.comppct_r / 100) / SUM(component.comppct_r), 2) 
+                      AS "Sand Percentage" 
+               FROM sacatalog 
+               JOIN legend ON sacatalog.areasymbol = legend.areasymbol 
+               JOIN mapunit ON legend.lkey = mapunit.lkey 
+               JOIN component ON mapunit.mukey = component.mukey 
+               JOIN chorizon ON component.cokey = chorizon.cokey 
+               WHERE sacatalog.areaname IS NOT NULL 
+               GROUP BY sacatalog.areaname 
+               ORDER BY sacatalog.areaname;'''
 
     query_input.clear()  # Clear any pre-existing text
     query_input.send_keys(query)
@@ -63,13 +74,44 @@ try:
         html_string = str(table)
         df = pd.read_html(StringIO(html_string))[0]
 
-        # Save the DataFrame to an Excel file
-        excel_file = 'sand_percentage_report.xlsx'
-        df.to_excel(excel_file, index=False, engine='openpyxl')
+        # Save the DataFrame to an Excel file with xlsxwriter engine
+        excel_file = 'sand_percentage_report_with_graph.xlsx'
+        writer = pd.ExcelWriter(excel_file, engine='xlsxwriter')
+        df.to_excel(writer, index=False, sheet_name='Sand Data')
 
-        print(f"Report successfully saved to {excel_file}")
+        # Create a plot using Seaborn
+        plt.figure(figsize=(12, 8))  # Adjust figure size based on dataset size
+        sns.lineplot(data=df, x='State', y='Sand Percentage', marker='o')
+
+        # Improve plot readability
+        plt.xticks(rotation=90)  # Rotate X-axis labels for better readability
+        plt.title('Sand Percentage by State', fontsize=16)
+        plt.xlabel('State', fontsize=12)
+        plt.ylabel('Sand Percentage', fontsize=12)
+        plt.grid(True)  # Add gridlines for better clarity
+        plt.tight_layout()  # Ensure labels and title fit within the figure
+
+        # Save the plot as an image file
+        plot_image = 'sand_percentage_plot.png'
+        plt.savefig(plot_image)
+
+        print(f"Plot saved as {plot_image}")
+
+        # Access the workbook and worksheet objects
+        workbook = writer.book
+        worksheet = writer.sheets['Sand Data']
+
+        # Insert the plot image into the worksheet
+        worksheet.insert_image('E2', plot_image)
+
+        # Save and close the Excel writer
+        writer.close()
+
+        print(f"Report with graph successfully saved to {excel_file}")
+
     else:
         print("Error: Table not found in the response.")
+
 finally:
     # Close the WebDriver
     driver.quit()
